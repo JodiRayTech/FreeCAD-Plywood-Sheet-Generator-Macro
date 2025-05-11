@@ -1,0 +1,142 @@
+
+import FreeCAD, FreeCADGui
+from PySide2.QtWidgets import QWidget, QVBoxLayout, QLabel, QComboBox, QLineEdit, QPushButton, QDialog
+import Part
+from fractions import Fraction
+
+plywood_sizes = {
+    '4x8': (48, 96), '4x4': (48, 48), '3x8': (36, 96), '3x6': (36, 72),
+    '2x8': (24, 96), '2x6': (24, 72), '2x4': (24, 48), '1x8': (12, 96),
+    '1x6': (12, 72), '1x4': (12, 48), '1x3': (12, 36), '1x2': (12, 24), '1x1': (12, 12)
+}
+
+thickness_mapping = {
+    '1/8"': 7/64, '1/4"': 7/32, '3/8"': 11/32, '1/2"': 15/32,
+    '5/8"': 19/32, '3/4"': 23/32, '1-1/8"': 1 + 1/8, '1-1/4"': 1 + 1/4
+}
+
+class PlywoodSizeDialog(QDialog):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Plywood Size Generator")
+        self.setGeometry(100, 100, 300, 250)
+        self.layout = QVBoxLayout()
+
+        self.size_label = QLabel("Select Plywood Size:")
+        self.size_input = QComboBox(self)
+        self.size_input.addItems(plywood_sizes.keys())
+
+        self.custom_label = QLabel("Custom Dimensions (width x length, e.g., 3' x 2'):")
+        self.custom_width_input = QLineEdit(self)
+        self.custom_length_input = QLineEdit(self)
+
+        self.thickness_label = QLabel("Select Thickness:")
+        self.thickness_input = QComboBox(self)
+        for option in thickness_mapping.keys():
+            self.thickness_input.addItem(option)
+
+        self.custom_thickness_label = QLabel("Custom Thickness (feet/inches, e.g., 0' 6"):")
+        self.custom_thickness_input = QLineEdit(self)
+
+        self.quantity_label = QLabel("Quantity:")
+        self.quantity_input = QLineEdit(self)
+        self.quantity_input.setText("1")
+
+        self.create_button = QPushButton("Create Plywood Piece", self)
+        self.create_button.clicked.connect(self.create_plywood)
+
+        for widget in [
+            self.size_label, self.size_input, self.custom_label,
+            QLabel("Width:"), self.custom_width_input,
+            QLabel("Length:"), self.custom_length_input,
+            self.thickness_label, self.thickness_input,
+            self.custom_thickness_label, self.custom_thickness_input,
+            self.quantity_label, self.quantity_input, self.create_button
+        ]:
+            self.layout.addWidget(widget)
+
+        self.setLayout(self.layout)
+
+    def parse_dimensions(self, dimension_str):
+        total_inches = 0
+        try:
+            dimension_str = dimension_str.strip()
+            if "'" in dimension_str:
+                parts = dimension_str.split()
+                feet = float(parts[0].replace("'", ""))
+                total_inches = feet * 12
+                if len(parts) > 1 and '"' in parts[1]:
+                    inches = self.convert_fraction_to_float(parts[1].replace('"', ''))
+                    total_inches += inches
+            elif '"' in dimension_str:
+                total_inches = self.convert_fraction_to_float(dimension_str.replace('"', ''))
+            else:
+                FreeCAD.Console.PrintError("Invalid format. Use 8', 96", or 6' 3".
+")
+        except:
+            FreeCAD.Console.PrintError("Error parsing dimension input.
+")
+            return 0
+        return total_inches
+
+    def convert_fraction_to_float(self, fraction_str):
+        try:
+            if '/' in fraction_str:
+                return float(Fraction(fraction_str))
+            return float(fraction_str)
+        except ValueError:
+            FreeCAD.Console.PrintError(f"Invalid fraction: {fraction_str}
+")
+            return 0
+
+    def create_plywood(self):
+        size = self.size_input.currentText()
+        width, length = plywood_sizes.get(size, (0, 0))
+
+        custom_width = self.custom_width_input.text().strip()
+        custom_length = self.custom_length_input.text().strip()
+        if custom_width:
+            width = self.parse_dimensions(custom_width)
+        if custom_length:
+            length = self.parse_dimensions(custom_length)
+
+        width_mm = width * 25.4
+        length_mm = length * 25.4
+
+        custom_thickness = self.custom_thickness_input.text().strip()
+        if custom_thickness:
+            thickness = self.parse_dimensions(custom_thickness)
+        else:
+            thickness = thickness_mapping.get(self.thickness_input.currentText(), 0.75)
+
+        thickness_mm = thickness * 25.4
+
+        try:
+            quantity = int(self.quantity_input.text().strip())
+        except ValueError:
+            quantity = 1
+
+        if quantity <= 0 or width_mm <= 0 or length_mm <= 0 or thickness_mm <= 0:
+            FreeCAD.Console.PrintError("All values must be greater than zero.
+")
+            return
+
+        doc = FreeCAD.ActiveDocument
+        if doc is None:
+            doc = FreeCAD.newDocument("PlywoodSheets")
+
+        for i in range(quantity):
+            sheet = Part.makeBox(width_mm, length_mm, thickness_mm)
+            sheet.translate(FreeCAD.Vector(0, 0, i * (thickness_mm + 1)))
+            obj = doc.addObject("Part::Feature", f"Plywood_{size}_{i + 1}")
+            obj.Shape = sheet
+
+        doc.recompute()
+        FreeCAD.Console.PrintMessage(f"{quantity} Plywood sheet(s) of size {size} created.
+")
+
+def show_plywood_dialog():
+    dialog = PlywoodSizeDialog()
+    dialog.exec_()
+
+show_plywood_dialog()
